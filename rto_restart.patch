@@ -1,0 +1,63 @@
+From 600a91cce0611400411a08e9ee3e83d503f5a017 Mon Sep 17 00:00:00 2001
+From: Mohammad Rajiullah <mrshammi@gmail.com>
+Date: Wed, 13 Feb 2013 17:47:16 +0100
+Subject: [PATCH] To support rtorestart functionalities.
+
+---
+ net/ipv4/tcp_input.c |   33 +++++++++++++++++++++++++++++++++
+ 1 file changed, 33 insertions(+)
+
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index 18f97ca..8acd086 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -3083,6 +3083,19 @@ static void tcp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+ 	tcp_sk(sk)->snd_cwnd_stamp = tcp_time_stamp;
+ }
+ 
++/* Find the timestamp of the packet in the write queue head 
++ *  return the diffrence between now and the send time 
++ */
++static unsigned int get_T_earliest(struct sock *sk) 
++{
++	struct timespec now, then, T_earliest;
++	       
++	getnstimeofday(&now);
++	then = ktime_to_timespec(tcp_write_queue_head(sk)->tstamp);
++	T_earliest = timespec_sub(now, then);
++	return timespec_to_jiffies(&T_earliest);
++}
++
+ /* Restart timer after forward progress on connection.
+  * RFC2988 recommends to restart timer to now+rto.
+  */
+@@ -3111,6 +3124,26 @@ void tcp_rearm_rto(struct sock *sk)
+ 			if (delta > 0)
+ 				rto = delta;
+ 		}
++                 /* Modified RTO:
++                 * (1) Given an ACK that acknowledges new data and if the 
++                 *     number of outstanding segments is less than four      
++                 * (2) then if the following two conditions hold:                  
++                 *   (a) there is no unsent data ready for transmission
++                 *   OR
++                 *   (b) the receiver's advertised window does not permit 
++                 *       transmission. then:
++                 * (3) set T_earliest to the time elapsed since the earliest
++                 *   outstanding segment was sent and deduct this value from 
++                 *   the rto.
++                 */
++	
++	 	 else if(tp->packets_out < 4 && 
++                         inet_csk(sk)->icsk_pending==ICSK_TIME_RETRANS)// (1)
++			if (sk->sk_send_head == NULL ||                // (2a)
++			    tp->snd_wnd < sk->sk_send_head->len){      // (2b)                                
++			 	unsigned int T_earliest = get_T_earliest(sk);
++                             	rto = rto- T_earliest;                 // (3)
++            		}
+ 		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS, rto,
+ 					  TCP_RTO_MAX);
+ 	}
+-- 
+1.7.10.4
+
